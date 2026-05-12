@@ -50,27 +50,18 @@
       retries: 10
       delay: 5
 
-    - name: ArgoCD root Application 생성
+    # R-32: 팀장님 개인 레포(kanei0415/ktcloud-k8s-argocd-manifest)에서
+    # 우리 팀 매니페스트 레포(KTCloud-CloudNative-Troica-Team/msa-argocd-manifest)로 전환.
+    # inline yaml 정의 대신 매니페스트 레포의 bootstrap/root-app.yaml을 fetch + apply →
+    # 단일 진실의 원천 유지 (root-app spec 변경 시 ansible 재실행 불필요, ArgoCD가 자동 sync).
+    - name: 매니페스트 레포의 root-app.yaml 다운로드
+      ansible.builtin.get_url:
+        url: https://raw.githubusercontent.com/KTCloud-CloudNative-Troica-Team/msa-argocd-manifest/main/bootstrap/root-app.yaml
+        dest: /tmp/root-app.yaml
+        mode: "0644"
+
+    - name: ArgoCD root Application 생성 (app-of-apps 진입점)
       kubernetes.core.k8s:
         state: present
-        definition:
-          apiVersion: argoproj.io/v1alpha1
-          kind: Application
-          metadata:
-            name: root-app
-            namespace: argocd
-          spec:
-            project: default
-            source:
-              repoURL: https://github.com/kanei0415/ktcloud-k8s-argocd-manifest.git
-              targetRevision: HEAD
-              path: Setup
-            destination:
-              server: https://kubernetes.default.svc
-              namespace: default
-            syncPolicy:
-              automated:
-                prune: true
-                selfHeal: true
-              syncOptions:
-                - CreateNamespace=true
+        src: /tmp/root-app.yaml
+        kubeconfig: /home/ec2-user/.kube/config
