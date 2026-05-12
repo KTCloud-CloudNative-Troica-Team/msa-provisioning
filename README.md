@@ -265,9 +265,32 @@ ECR 레포는 `force_delete = true` 덕분에 안에 이미지가 있어도 dest
 
 ---
 
-### 후속 — Ansible (별도 PR)
+### Ansible — kubelet ECR credential provider (`phase-0/kubelet-ecr-credential-provider`)
 
-kubelet이 ECR private 레포에서 image pull하려면 `image-credential-provider-config` 설정 필요. EC2 instance profile에 `AmazonEC2ContainerRegistryReadOnly` managed policy도 부여. 본 PR에는 미포함 — 클러스터 실 적용은 더 신중한 별도 PR로.
+PR 1, PR 3 머지 후 main에 rebase + 머지.
+
+추가 파일:
+- `terraform/iam.tf` — node role에 `AmazonEC2ContainerRegistryReadOnly` 부여
+- `terraform/ansible.tf` + `terraform/inventory.tftpl` — `aws_account_id`, `aws_region`을 ansible inventory에 주입
+- `ansible/ecr-credential-provider-setup.yaml` — 신규 playbook
+- `ansible/configuration/credential-provider-config.yaml.j2` — kubelet 설정 템플릿
+- `ansible/main.yaml` — argocd-setup 이후 import 추가
+
+Playbook 동작:
+1. `ecr-credential-provider` 바이너리 다운로드 (`v1.30.5`, cloud-provider-aws 릴리스)
+2. `/etc/kubernetes/credential-provider-config.yaml` 배포
+3. kubelet systemd drop-in 추가 (`--image-credential-provider-config` + `--image-credential-provider-bin-dir`)
+4. systemd daemon-reload + kubelet 재시작
+
+```bash
+# PR 1 머지 + terraform apply 후
+terraform apply         # iam attach 반영
+ansible-playbook -i ../ansible/inventory.ini ../ansible/main.yaml
+# 또는 ecr playbook만 단독:
+ansible-playbook -i ../ansible/inventory.ini ../ansible/ecr-credential-provider-setup.yaml
+```
+
+**주의**: kubelet 재시작은 노드 단위로 일시적 영향. 운영 클러스터라면 `serial: 1`로 rolling 적용 권장.
 - Ansible의Playbook을 기동하기위한 리모트 호스트의 Fingerprint를 로컬 머신에 등록할 필요가 있다. 양쪽의 bastion에 ssh접속해서「yes」를 입력하자
 ```terraform
 output "ap-northeast-2a-bastion-node-connect-command" {
