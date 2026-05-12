@@ -111,6 +111,46 @@ https://github.com/kubernetes-sigs/aws-load-balancer-controller/blob/main/docs/i
 ```terminal
 ➜  terraform git:(master) terraform apply
 ```
+
+---
+
+## Phase 0 — AWS OIDC + ECR + VPC Endpoint (Troica polyrepo CI/CD 사전조건)
+
+본 PR(`phase-0/aws-ecr-oidc`)이 추가하는 파일:
+
+- `terraform/variables.tf` — `region`, `github_org`, `msa_services` 변수 + `aws_caller_identity` data source
+- `terraform/oidc.tf` — GitHub Actions OIDC IdP + `troica-gha-ecr-push` IAM Role (KTCloud-CloudNative-Troica-Team Org의 `msa-*` 레포 main 브랜치만 assume 허용)
+- `terraform/ecr.tf` — KMS key + 6개 ECR 레포 (`msa/{user,auth,product,inventory,order,api-gateway}-service`) + lifecycle (최근 30 이미지 유지)
+- `terraform/vpc-endpoint.tf` — Security group + ECR Interface endpoint × 2 + S3 Gateway endpoint
+
+비용 추정 (월): KMS $1 + ECR Interface endpoint × 2 ≈ $14 + ECR/KMS 사용 트래픽 = **약 $15~25/월** (사용량에 따라).
+
+### apply 절차
+
+```bash
+cd terraform
+terraform init
+terraform plan          # 변경 사항 검토 — 신규 자원 ~13개
+terraform apply         # AWS 자원 생성 (사용자 직접 컨펌)
+
+# apply 후 output 값 확인
+terraform output gha_ecr_push_role_arn     # ci.yml의 role-to-assume과 일치 확인
+terraform output ecr_registry_url           # 매니페스트 values 의 image.repository ACCOUNT_ID 부분
+```
+
+### GitHub Org Secrets / Variables 등록
+
+apply 성공 후 GitHub Organization Settings → Secrets and variables → Actions:
+
+| 종류 | 이름 | 값 |
+|------|------|----|
+| Secret | `AWS_ACCOUNT_ID` | `terraform output gha_ecr_push_role_arn` 의 12자리 account_id |
+| Secret | `MANIFEST_PAT` | fine-grained PAT (`msa-argocd-manifest` contents:write + pull-requests:write) |
+| **Variable** | `AWS_DEPLOYMENTS_ENABLED` | `true` (BACKLOG R-19 활성화 — 6개 서비스 CI 일괄 활성) |
+
+### 후속 — Ansible (별도 PR)
+
+kubelet이 ECR private 레포에서 image pull하려면 `image-credential-provider-config` 설정 필요. EC2 instance profile에 `AmazonEC2ContainerRegistryReadOnly` managed policy도 부여. 본 PR에는 미포함 — 클러스터 실 적용은 더 신중한 별도 PR로.
 - Ansible의Playbook을 기동하기위한 리모트 호스트의 Fingerprint를 로컬 머신에 등록할 필요가 있다. 양쪽의 bastion에 ssh접속해서「yes」를 입력하자
 ```terraform
 output "ap-northeast-2a-bastion-node-connect-command" {
