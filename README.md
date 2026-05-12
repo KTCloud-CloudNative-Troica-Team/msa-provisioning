@@ -148,6 +148,123 @@ apply 성공 후 GitHub Organization Settings → Secrets and variables → Acti
 | Secret | `MANIFEST_PAT` | fine-grained PAT (`msa-argocd-manifest` contents:write + pull-requests:write) |
 | **Variable** | `AWS_DEPLOYMENTS_ENABLED` | `true` (BACKLOG R-19 활성화 — 6개 서비스 CI 일괄 활성) |
 
+---
+
+## Phase 0 — S3 backend + 영구/임시 자원 분리 (비용 사이클)
+
+**왜 필요한가**: 1인당 예산 66,666원 제약 + 3인 협업. `terraform apply → 검증 → destroy` 사이클 반복으로 비용 최소화. 그러나 OIDC role ARN / ECR URL은 GitHub Org Secrets에 등록되므로 사이클마다 변경되면 안 됨.
+
+### 자원 분류
+
+| 분류 | 자원 | 보호 방식 | 월 비용 |
+|------|------|-----------|---------|
+| **영구** | OIDC Provider, IAM Role, IAM Role Policy | `lifecycle { prevent_destroy = true }` | ~$0 |
+| **영구** | ECR KMS key + alias | `prevent_destroy = true` | ~$1 |
+| **영구** | ECR 레포 × 6 + lifecycle policy | `prevent_destroy = true` + `force_delete = true` | ~$0 (이미지 적음) |
+| **영구** | VPC, Subnet, RT, IGW, SG, Key Pair | (변경 없음, 비용 0) | $0 |
+| **임시** | EC2 × 7, EBS × 3, EFS, NAT × 2, NLB, EIP × 4 | `scripts/destroy-temp.sh -target` | ~$300 |
+| **임시** | VPC Endpoint Interface × 2 + S3 Gateway | `scripts/destroy-temp.sh -target` | ~$14 |
+| **수동** | S3 backend bucket | Terraform 외부 1회 생성 (닭과 달걀 회피) | <$0.5 |
+
+**ARN/URL 안정성**: 영구 자원은 모두 **name-based**. destroy → apply 후에도 ARN/URL 동일 → GitHub Secrets 영구 유효.
+
+### S3 backend 부트스트랩 (1인이 1회 수행)
+
+`terraform/backend.tf`에서 `<SUFFIX>` placeholder를 실제 값으로 치환. (예: `troica` 또는 account_id 끝 6자리. 글로벌 유니크하면 됨.)
+
+```bash
+# 1) S3 bucket 1회 수동 생성 — terraform 외부 (닭과 달걀 회피)
+SUFFIX=<your-suffix>    # 예: SUFFIX=troica-2026
+BUCKET="troica-tfstate-${SUFFIX}"
+REGION=ap-northeast-2
+
+aws s3api create-bucket \
+  --bucket "$BUCKET" \
+  --region "$REGION" \
+  --create-bucket-configuration LocationConstraint="$REGION"
+
+# 2) Versioning (state 실수 복구용 — 강력 권장)
+aws s3api put-bucket-versioning \
+  --bucket "$BUCKET" \
+  --versioning-configuration Status=Enabled
+
+# 3) 서버 측 암호화 (SSE-S3)
+aws s3api put-bucket-encryption \
+  --bucket "$BUCKET" \
+  --server-side-encryption-configuration '{
+    "Rules": [{"ApplyServerSideEncryptionByDefault": {"SSEAlgorithm": "AES256"}}]
+  }'
+
+# 4) Public Access Block
+aws s3api put-public-access-block \
+  --bucket "$BUCKET" \
+  --public-access-block-configuration "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicAccess=true"
+
+# 5) terraform/backend.tf의 <SUFFIX>를 위 SUFFIX 값으로 치환 (커밋)
+#    (편집기로 직접 또는 sed -i "s|troica-tfstate-<SUFFIX>|$BUCKET|" terraform/backend.tf)
+```
+
+### 첫 init + migrate (1인 1회)
+
+이미 기존에 로컬 `.tfstate`로 apply한 적이 있다면 migrate:
+
+```bash
+cd terraform
+terraform init -migrate-state
+# "Do you want to copy existing state to the new backend?" → yes
+```
+
+처음부터 S3로 가는 경우:
+
+```bash
+cd terraform
+terraform init
+```
+
+### 협업자 (2~3인)
+
+backend.tf가 커밋되어 있으므로 각자 로컬에서:
+
+```bash
+git pull
+cd terraform
+terraform init
+# S3에서 state 자동 다운로드. apply/plan 시 native lockfile로 동시 작업 보호.
+```
+
+`use_lockfile = true` (Terraform 1.10+)가 켜져 있어 DynamoDB 별도 운영 불필요.
+
+### 비용 사이클 워크플로우
+
+```bash
+# (1) 검증 시작 — 영구 + 임시 자원 모두 apply
+cd terraform
+terraform apply
+
+# (2) 검증 작업 (Ansible로 클러스터 구축, ArgoCD 동기화, 서비스 배포 확인 등)
+
+# (3) 검증 종료 — 임시 자원만 destroy
+bash scripts/destroy-temp.sh
+# 또는: bash scripts/destroy-temp.sh --auto-approve
+
+# (4) 다음날 재개 — apply 한 번이면 임시 자원만 재생성 (영구는 unchanged)
+terraform apply
+```
+
+이 사이클에서 GitHub Org Secret `AWS_ACCOUNT_ID`와 ECR 이미지는 그대로 유지됨. CI workflow는 영향 없음.
+
+### prevent_destroy 일시 해제 (정말 필요한 경우만)
+
+프로젝트 종료 등으로 영구 자원도 destroy해야 한다면:
+
+1. `oidc.tf`, `ecr.tf`의 모든 `prevent_destroy = true`를 `false`로 변경 (commit 권장)
+2. `terraform destroy` 전체 (또는 -target 지정)
+3. 끝난 후 S3 bucket도 수동 삭제: `aws s3 rb s3://$BUCKET --force`
+
+ECR 레포는 `force_delete = true` 덕분에 안에 이미지가 있어도 destroy 가능.
+
+---
+
 ### 후속 — Ansible (별도 PR)
 
 kubelet이 ECR private 레포에서 image pull하려면 `image-credential-provider-config` 설정 필요. EC2 instance profile에 `AmazonEC2ContainerRegistryReadOnly` managed policy도 부여. 본 PR에는 미포함 — 클러스터 실 적용은 더 신중한 별도 PR로.
