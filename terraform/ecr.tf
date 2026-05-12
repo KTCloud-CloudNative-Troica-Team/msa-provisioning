@@ -11,6 +11,14 @@ resource "aws_kms_key" "ecr" {
   tags = {
     Project = "troica"
   }
+
+  # 영구 자원 — KMS key는 ECR 레포 암호화에 묶여있어서,
+  # KMS key가 destroy되면 ECR 안의 이미지가 복호화 불가 (deletion_window 동안만 복구 가능).
+  # 또한 ECR 레포가 동일 key를 참조하므로 key 변경 시 ECR 재생성 cascade 발생.
+  # 비용 ~$1/월 (사용량 매우 적음).
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_kms_alias" "ecr" {
@@ -22,6 +30,12 @@ resource "aws_ecr_repository" "service" {
   for_each             = toset(var.msa_services)
   name                 = "msa/${each.value}"
   image_tag_mutability = "IMMUTABLE"
+
+  # force_delete = true:
+  # prevent_destroy를 일시 false로 변경한 후 의도적으로 destroy하는 경우,
+  # 레포 안에 이미지가 들어있어도 강제 삭제 가능하도록.
+  # 평소에는 prevent_destroy가 우선 작동하므로 안전.
+  force_delete = true
 
   encryption_configuration {
     encryption_type = "KMS"
@@ -35,6 +49,16 @@ resource "aws_ecr_repository" "service" {
   tags = {
     Project = "troica"
     Service = each.value
+  }
+
+  # 영구 자원 — ECR 레포 URL은 매니페스트 values의 image.repository에 hardcoded.
+  # name-based (account_id.dkr.ecr.region.amazonaws.com/msa/<service>) 이므로
+  # destroy → apply 후 동일 URL 복원되지만, 이미지 자체가 모두 사라지므로
+  # 다음 apply 후 6개 서비스 모두 재push 필요 (CI workflow_dispatch로 가능하지만 번거로움).
+  # → prevent_destroy로 봉인.
+  # 비용 ~$0.1/GB/월 (이미지 30개 보존 lifecycle 적용됨, 실제 매우 적음).
+  lifecycle {
+    prevent_destroy = true
   }
 }
 
