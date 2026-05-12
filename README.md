@@ -198,10 +198,41 @@ aws s3api put-bucket-encryption \
 # 4) Public Access Block
 aws s3api put-public-access-block \
   --bucket "$BUCKET" \
-  --public-access-block-configuration "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicAccess=true"
+  --public-access-block-configuration "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"
 
 # 5) terraform/backend.tf의 <SUFFIX>를 위 SUFFIX 값으로 치환 (커밋)
 #    (편집기로 직접 또는 sed -i "s|troica-tfstate-<SUFFIX>|$BUCKET|" terraform/backend.tf)
+```
+
+#### Windows PowerShell 대안
+
+PowerShell 5.1은 native exe에 JSON 따옴표 보존이 깨지므로 AWS CLI shorthand 사용:
+
+```powershell
+$SUFFIX = "troica-2026"
+$BUCKET = "troica-tfstate-$SUFFIX"
+$REGION = "ap-northeast-2"
+
+# 1) create-bucket
+aws s3api create-bucket `
+  --bucket $BUCKET `
+  --region $REGION `
+  --create-bucket-configuration LocationConstraint=$REGION
+
+# 2) Versioning
+aws s3api put-bucket-versioning `
+  --bucket $BUCKET `
+  --versioning-configuration Status=Enabled
+
+# 3) SSE-S3 — JSON 대신 shorthand
+aws s3api put-bucket-encryption `
+  --bucket $BUCKET `
+  --server-side-encryption-configuration "Rules=[{ApplyServerSideEncryptionByDefault={SSEAlgorithm=AES256}}]"
+
+# 4) Public Access Block (RestrictPublicBuckets — Access 아님)
+aws s3api put-public-access-block `
+  --bucket $BUCKET `
+  --public-access-block-configuration "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"
 ```
 
 ### 첫 init + migrate (1인 1회)
