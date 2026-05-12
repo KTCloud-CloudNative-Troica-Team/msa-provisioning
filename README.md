@@ -1,5 +1,5 @@
 ### AWS Architecture
-![AWS デプロイアーキテクチャ](images/AWS-arch.png)
+![AWS 배포 아키텍처](images/AWS-arch.png)
 
 ### IAM 정책
 - terraform을 실행하려면 이하와 같은 IAM 정책이 필요하다

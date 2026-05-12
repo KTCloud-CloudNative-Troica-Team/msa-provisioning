@@ -1,13 +1,13 @@
-- name: MasterノードにPythonとKubernetesライブラリをインストール
+- name: Master 노드에 Python과 Kubernetes 라이브러리 설치
   hosts: main-master
   become: true
   tasks:
-    - name: Python3-pipインストール
+    - name: Python3-pip 설치
       yum:
         name: python3-pip
         state: present
 
-    - name: kubernetesパイソンライブラリインストール
+    - name: kubernetes Python 라이브러리 설치
       pip:
         name:
           - kubernetes
