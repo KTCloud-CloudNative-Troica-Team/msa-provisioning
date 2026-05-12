@@ -1,8 +1,8 @@
-- name: KubernetesクラスタのCNIプラグインセットアップ
+- name: Kubernetes 클러스터 CNI 플러그인 셋업
   hosts: main-master
   become: true
   tasks:
-    - name: Calicoネットワークプラグインの適用
+    - name: Calico 네트워크 플러그인 적용
       become: false
       ansible.builtin.shell: |
         kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.27.0/manifests/calico.yaml
