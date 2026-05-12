@@ -1,160 +1,51 @@
-### AWS Architecture
-![AWS 배포 아키텍처](images/AWS-arch.png)
+# msa-provisioning
 
-### IAM 정책
-- terraform을 실행하려면 이하와 같은 IAM 정책이 필요하다
-```json
-{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Sid": "EC2AndVPCManagement",
-            "Effect": "Allow",
-            "Action": [
-                "ec2:*Vpc*",
-                "ec2:*Subnet*",
-                "ec2:*Gateway*",
-                "ec2:*Route*",
-                "ec2:*Address*",
-                "ec2:*Instance*",
-                "ec2:*SecurityGroup*",
-                "ec2:*NetworkInterface*",
-                "ec2:*KeyPair*",
-                "ec2:*Image*",
-                "ec2:*Volume*",
-                "ec2:*Tag*"
-            ],
-            "Resource": "*"
-        },
-        {
-            "Sid": "ELBManagement",
-            "Effect": "Allow",
-            "Action": [
-                "elasticloadbalancing:*"
-            ],
-            "Resource": "*"
-        },
-        {
-            "Sid": "EFSManagement",
-            "Effect": "Allow",
-            "Action": [
-                "elasticfilesystem:CreateFileSystem",
-                "elasticfilesystem:CreateMountTarget",
-                "elasticfilesystem:DeleteFileSystem",
-                "elasticfilesystem:DeleteMountTarget",
-                "elasticfilesystem:DescribeFileSystems",
-                "elasticfilesystem:DescribeMountTargets",
-                "elasticfilesystem:ModifyFileSystem",
-                "elasticfilesystem:DescribeMountTargetSecurityGroups"
-            ],
-            "Resource": "*"
-        }
-    ]
-}
-```
-- IAM Role관련 권한 정책
-```json
-{
-	"Version": "2012-10-17",
-	"Statement": [
-		{
-			"Sid": "AllowReadSpecificRole",
-			"Effect": "Allow",
-			"Action": [
-				"iam:GetRole",
-				"iam:ListRoles",
-				"iam:PassRole"
-			],
-			"Resource": "*"
-		},
-		{
-			"Sid": "AllowInstanceProfileManagement",
-			"Effect": "Allow",
-			"Action": [
-				"iam:GetInstanceProfile",
-				"iam:CreateInstanceProfile",
-				"iam:AddRoleToInstanceProfile",
-				"iam:RemoveRoleFromInstanceProfile",
-				"iam:DeleteInstanceProfile"
-			],
-			"Resource": "*"
-		}
-	]
-}
-```
+Troica Market Service MSA의 **AWS 인프라 (Terraform) + Kubernetes 클러스터 셋업 (Ansible)** 단일 진실의 원천.
 
-### aws cli
-- terraform에서는 aws-cli aws confiture을 통해서 확인정보를 읽어들임
-```terminal
-➜  ktcloud-sptingboot-msa-market-service git:(master) brew install aws-cli
-```
-- CLI전용의IAM Secret Key와ap-northeast-2리젼을 입력한다
-```terminal
-➜  ktcloud-sptingboot-msa-market-service git:(master) aws configure
-```
+> 매니페스트 + SPEC + ADR: [msa-argocd-manifest](https://github.com/KTCloud-CloudNative-Troica-Team/msa-argocd-manifest)
+> 트러블슈팅: [TROUBLESHOOTING.md](https://github.com/KTCloud-CloudNative-Troica-Team/msa-argocd-manifest/blob/main/docs/TROUBLESHOOTING.md)
 
-### 키페어
-- 키페어를 위한 쉘을 가동한다
-```terminal
-➜  provisioning git:(master) bash ssh-key-gen.bash
-```
+## 시스템 아키텍처
 
-### NLB을 클러스터에 등록하기 위한 IAM 롤
-- EKS가 아니라、EC2에서 구축한 클러스터는 NLB를 등록하기 위해 노드에 이하의 IAM정책이 필요하다
-https://github.com/kubernetes-sigs/aws-load-balancer-controller/blob/main/docs/install/iam_policy.json
-- 「ktcloud-cluster-node-role」의IAM Role에 아까 IAM정책을 붙여서 준비하자
+![AWS 배포 아키텍처](https://raw.githubusercontent.com/KTCloud-CloudNative-Troica-Team/msa-argocd-manifest/main/docs/images/AWS-arch.png)
 
-### Terrafrom
-```terminal
-➜  terraform git:(master) terraform plan
-```
-```terminal
-➜  terraform git:(master) terraform apply
-```
+> 모든 다이어그램은 `msa-argocd-manifest/docs/images/`에 단일 위치 보관.
 
 ---
 
-## Phase 0 — AWS OIDC + ECR + VPC Endpoint (Troica polyrepo CI/CD 사전조건)
+## 빠른 시작 (3인 협업, L3 — 클러스터 부트스트랩까지)
 
-본 PR(`phase-0/aws-ecr-oidc`)이 추가하는 파일:
+본 레포만으로 AWS Phase 0 영구 자원 → 임시 클러스터 자원 → k8s/ArgoCD 셋업까지.
 
-- `terraform/variables.tf` — `region`, `github_org`, `msa_services` 변수 + `aws_caller_identity` data source
-- `terraform/oidc.tf` — GitHub Actions OIDC IdP + `troica-gha-ecr-push` IAM Role (KTCloud-CloudNative-Troica-Team Org의 `msa-*` 레포 main 브랜치만 assume 허용)
-- `terraform/ecr.tf` — KMS key + 6개 ECR 레포 (`msa/{user,auth,product,inventory,order,api-gateway}-service`) + lifecycle (최근 30 이미지 유지)
-- `terraform/vpc-endpoint.tf` — Security group + ECR Interface endpoint × 2 + S3 Gateway endpoint
+### 사전 요구사항
 
-비용 추정 (월): KMS $1 + ECR Interface endpoint × 2 ≈ $14 + ECR/KMS 사용 트래픽 = **약 $15~25/월** (사용량에 따라).
+| 항목 | 버전 / 설정 |
+|---|---|
+| AWS CLI | 2.x + `aws configure`로 IAM 자격 등록 |
+| Terraform | **1.10.0+** (S3 backend native lockfile 요구) |
+| Ansible | 2.16+ (WSL Ubuntu 또는 Linux/Mac) |
+| Go | 1.22+ — `ecr-credential-provider` 빌드용 (R-29) |
+| SSH key | `~/.ssh/ktcloud-bastion-node-key` (저장소 루트 `ssh-key-gen.bash` 참조) |
+| IAM 정책 | [상세 정책](#iam-정책-aws-cli-사용자에-부착) — EC2/ELB/EFS/IAM Role 최소 권한 |
 
-### apply 절차
+### 작업 흐름
 
-```bash
-cd terraform
-terraform init
-terraform plan          # 변경 사항 검토 — 신규 자원 ~13개
-terraform apply         # AWS 자원 생성 (사용자 직접 컨펌)
-
-# apply 후 output 값 확인
-terraform output gha_ecr_push_role_arn     # ci.yml의 role-to-assume과 일치 확인
-terraform output ecr_registry_url           # 매니페스트 values 의 image.repository ACCOUNT_ID 부분
+```
+1. (1인, 1회) S3 backend bucket 수동 생성 — terraform 외부
+2. (1인, 1회) terraform apply — 영구 + 임시 자원 일괄
+3. (1인, 1회) GitHub Org Secrets/Variables 등록 — AWS_ACCOUNT_ID / MANIFEST_PAT / AWS_DEPLOYMENTS_ENABLED=true
+4. (1인) Go 빌드 — ecr-credential-provider 바이너리
+5. (1인) Ansible 실행 — k8s + ArgoCD + ECR credential provider 셋업
+6. (검증 후) destroy-temp.sh — 임시 자원만 정리 (영구 자원 유지)
 ```
 
-### GitHub Org Secrets / Variables 등록
-
-apply 성공 후 GitHub Organization Settings → Secrets and variables → Actions:
-
-| 종류 | 이름 | 값 |
-|------|------|----|
-| Secret | `AWS_ACCOUNT_ID` | `terraform output gha_ecr_push_role_arn` 의 12자리 account_id |
-| Secret | `MANIFEST_PAT` | fine-grained PAT (`msa-argocd-manifest` contents:write + pull-requests:write) |
-| **Variable** | `AWS_DEPLOYMENTS_ENABLED` | `true` (BACKLOG R-19 활성화 — 6개 서비스 CI 일괄 활성) |
+각 단계 상세는 아래 섹션.
 
 ---
 
-## Phase 0 — S3 backend + 영구/임시 자원 분리 (비용 사이클)
+## Phase 0 — AWS 인프라 자원 분류
 
-**왜 필요한가**: 1인당 예산 66,666원 제약 + 3인 협업. `terraform apply → 검증 → destroy` 사이클 반복으로 비용 최소화. 그러나 OIDC role ARN / ECR URL은 GitHub Org Secrets에 등록되므로 사이클마다 변경되면 안 됨.
-
-### 자원 분류
+비용 사이클 가능하도록 **영구 / 임시 / 수동** 자원 분리.
 
 | 분류 | 자원 | 보호 방식 | 월 비용 |
 |------|------|-----------|---------|
@@ -162,22 +53,26 @@ apply 성공 후 GitHub Organization Settings → Secrets and variables → Acti
 | **영구** | ECR KMS key + alias | `prevent_destroy = true` | ~$1 |
 | **영구** | ECR 레포 × 6 + lifecycle policy | `prevent_destroy = true` + `force_delete = true` | ~$0 (이미지 적음) |
 | **영구** | VPC, Subnet, RT, IGW, SG, Key Pair | (변경 없음, 비용 0) | $0 |
-| **임시** | EC2 × 7, EBS × 3, EFS, NAT × 2, NLB, EIP × 4 | `scripts/destroy-temp.sh -target` | ~$300 |
-| **임시** | VPC Endpoint Interface × 2 + S3 Gateway | `scripts/destroy-temp.sh -target` | ~$14 |
+| **임시** | EC2 × 8, EBS × 3, EFS, NAT × 2, NLB, EIP × 4 | `scripts/destroy-temp.{sh,ps1} -target` | ~$300 |
+| **임시** | VPC Endpoint Interface × 2 + S3 Gateway | `scripts/destroy-temp.{sh,ps1} -target` | ~$14 |
 | **수동** | S3 backend bucket | Terraform 외부 1회 생성 (닭과 달걀 회피) | <$0.5 |
 
 **ARN/URL 안정성**: 영구 자원은 모두 **name-based**. destroy → apply 후에도 ARN/URL 동일 → GitHub Secrets 영구 유효.
 
-### S3 backend 부트스트랩 (1인이 1회 수행)
+---
 
-`terraform/backend.tf`에서 `<SUFFIX>` placeholder를 실제 값으로 치환. (예: `troica` 또는 account_id 끝 6자리. 글로벌 유니크하면 됨.)
+## STEP 1 — S3 backend 부트스트랩 (1인, 1회)
+
+`terraform/backend.tf`에서 `<SUFFIX>` placeholder를 실제 값으로 치환 (예: `troica-2026`).
+
+### Linux/Mac (bash)
 
 ```bash
-# 1) S3 bucket 1회 수동 생성 — terraform 외부 (닭과 달걀 회피)
-SUFFIX=<your-suffix>    # 예: SUFFIX=troica-2026
+SUFFIX=troica-2026
 BUCKET="troica-tfstate-${SUFFIX}"
 REGION=ap-northeast-2
 
+# 1) bucket 생성
 aws s3api create-bucket \
   --bucket "$BUCKET" \
   --region "$REGION" \
@@ -188,211 +83,308 @@ aws s3api put-bucket-versioning \
   --bucket "$BUCKET" \
   --versioning-configuration Status=Enabled
 
-# 3) 서버 측 암호화 (SSE-S3)
+# 3) SSE-S3 암호화
 aws s3api put-bucket-encryption \
   --bucket "$BUCKET" \
-  --server-side-encryption-configuration '{
-    "Rules": [{"ApplyServerSideEncryptionByDefault": {"SSEAlgorithm": "AES256"}}]
-  }'
+  --server-side-encryption-configuration \
+    'Rules=[{ApplyServerSideEncryptionByDefault={SSEAlgorithm=AES256}}]'
 
 # 4) Public Access Block
 aws s3api put-public-access-block \
   --bucket "$BUCKET" \
   --public-access-block-configuration "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"
 
-# 5) terraform/backend.tf의 <SUFFIX>를 위 SUFFIX 값으로 치환 (커밋)
-#    (편집기로 직접 또는 sed -i "s|troica-tfstate-<SUFFIX>|$BUCKET|" terraform/backend.tf)
+# 5) terraform/backend.tf의 <SUFFIX> 치환 (편집기 또는 sed)
+sed -i "s|troica-tfstate-<SUFFIX>|$BUCKET|" terraform/backend.tf
 ```
 
-#### Windows PowerShell 대안
-
-PowerShell 5.1은 native exe에 JSON 따옴표 보존이 깨지므로 AWS CLI shorthand 사용:
+### Windows PowerShell
 
 ```powershell
 $SUFFIX = "troica-2026"
 $BUCKET = "troica-tfstate-$SUFFIX"
 $REGION = "ap-northeast-2"
 
-# 1) create-bucket
-aws s3api create-bucket `
-  --bucket $BUCKET `
-  --region $REGION `
+aws s3api create-bucket --bucket $BUCKET --region $REGION `
   --create-bucket-configuration LocationConstraint=$REGION
 
-# 2) Versioning
-aws s3api put-bucket-versioning `
-  --bucket $BUCKET `
+aws s3api put-bucket-versioning --bucket $BUCKET `
   --versioning-configuration Status=Enabled
 
-# 3) SSE-S3 — JSON 대신 shorthand
-aws s3api put-bucket-encryption `
-  --bucket $BUCKET `
+aws s3api put-bucket-encryption --bucket $BUCKET `
   --server-side-encryption-configuration "Rules=[{ApplyServerSideEncryptionByDefault={SSEAlgorithm=AES256}}]"
 
-# 4) Public Access Block (RestrictPublicBuckets — Access 아님)
-aws s3api put-public-access-block `
-  --bucket $BUCKET `
+aws s3api put-public-access-block --bucket $BUCKET `
   --public-access-block-configuration "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"
 ```
 
-### 첫 init + migrate (1인 1회)
+(PowerShell의 JSON 따옴표 보존 문제 회피를 위해 AWS CLI shorthand 사용.)
 
-이미 기존에 로컬 `.tfstate`로 apply한 적이 있다면 migrate:
+---
+
+## STEP 2 — terraform init + apply
+
+### 첫 init (이전 로컬 state가 있는 경우 마이그레이션)
 
 ```bash
 cd terraform
 terraform init -migrate-state
-# "Do you want to copy existing state to the new backend?" → yes
+# 프롬프트: "Do you want to copy existing state to the new backend?" → yes
 ```
 
-처음부터 S3로 가는 경우:
-
+처음부터 S3 backend 사용 시:
 ```bash
 cd terraform
 terraform init
 ```
 
-### 협업자 (2~3인)
+### 협업자 (다른 멤버, 1회)
 
-backend.tf가 커밋되어 있으므로 각자 로컬에서:
-
+backend.tf가 main에 머지된 후:
 ```bash
 git pull
 cd terraform
 terraform init
-# S3에서 state 자동 다운로드. apply/plan 시 native lockfile로 동시 작업 보호.
 ```
 
-`use_lockfile = true` (Terraform 1.10+)가 켜져 있어 DynamoDB 별도 운영 불필요.
+S3 lockfile (`use_lockfile = true`)로 동시 apply 방지. DynamoDB 불필요.
 
-### 비용 사이클 워크플로우
+### apply
 
 ```bash
-# (1) 검증 시작 — 영구 + 임시 자원 모두 apply
-cd terraform
-terraform apply
-
-# (2) 검증 작업 (Ansible로 클러스터 구축, ArgoCD 동기화, 서비스 배포 확인 등)
-
-# (3) 검증 종료 — 임시 자원만 destroy
-bash scripts/destroy-temp.sh
-# 또는: bash scripts/destroy-temp.sh --auto-approve
-
-# (4) 다음날 재개 — apply 한 번이면 임시 자원만 재생성 (영구는 unchanged)
-terraform apply
+terraform plan -out phase-0.tfplan
+terraform apply phase-0.tfplan
 ```
 
-이 사이클에서 GitHub Org Secret `AWS_ACCOUNT_ID`와 ECR 이미지는 그대로 유지됨. CI workflow는 영향 없음.
+기대: ~71개 자원 생성 (영구 17 + 임시 ~45 + 부수). 약 5-15분.
 
-### prevent_destroy 일시 해제 (정말 필요한 경우만)
+### output 확인 + Org Secrets 등록
 
-프로젝트 종료 등으로 영구 자원도 destroy해야 한다면:
+```bash
+terraform output gha_ecr_push_role_arn
+# arn:aws:iam::<ACCOUNT_ID>:role/troica-gha-ecr-push
 
-1. `oidc.tf`, `ecr.tf`의 모든 `prevent_destroy = true`를 `false`로 변경 (commit 권장)
-2. `terraform destroy` 전체 (또는 -target 지정)
-3. 끝난 후 S3 bucket도 수동 삭제: `aws s3 rb s3://$BUCKET --force`
+terraform output ecr_registry_url
+# <ACCOUNT_ID>.dkr.ecr.ap-northeast-2.amazonaws.com
+```
 
-ECR 레포는 `force_delete = true` 덕분에 안에 이미지가 있어도 destroy 가능.
+**GitHub Organization Settings → Secrets and variables → Actions**:
+
+| 종류 | 이름 | 값 |
+|------|------|----|
+| Secret | `AWS_ACCOUNT_ID` | 위 ARN의 12자리 account_id |
+| Secret | `MANIFEST_PAT` | fine-grained PAT (`msa-argocd-manifest` contents:write + pull-requests:write) |
+| **Variable** | `AWS_DEPLOYMENTS_ENABLED` | `true` (BACKLOG R-19 활성화 — 6개 서비스 CI 일괄 활성) |
 
 ---
 
-### Ansible — kubelet ECR credential provider (`phase-0/kubelet-ecr-credential-provider`)
+## STEP 3 — ecr-credential-provider 바이너리 빌드 (R-29)
 
-PR 1, PR 3 머지 후 main에 rebase + 머지.
-
-추가 파일:
-- `terraform/iam.tf` — node role에 `AmazonEC2ContainerRegistryReadOnly` 부여
-- `terraform/ansible.tf` + `terraform/inventory.tftpl` — `aws_account_id`, `aws_region`을 ansible inventory에 주입
-- `ansible/ecr-credential-provider-setup.yaml` — 신규 playbook
-- `ansible/configuration/credential-provider-config.yaml.j2` — kubelet 설정 템플릿
-- `ansible/main.yaml` — argocd-setup 이후 import 추가
-
-Playbook 동작:
-1. `ecr-credential-provider` 바이너리 다운로드 (`v1.30.5`, cloud-provider-aws 릴리스)
-2. `/etc/kubernetes/credential-provider-config.yaml` 배포
-3. kubelet systemd drop-in 추가 (`--image-credential-provider-config` + `--image-credential-provider-bin-dir`)
-4. systemd daemon-reload + kubelet 재시작
+`cloud-provider-aws`는 GitHub Release에 binary asset 미게시 (assets=0). Go 소스에서 직접 빌드:
 
 ```bash
-# PR 1 머지 + terraform apply 후
-terraform apply         # iam attach 반영
-ansible-playbook -i ../ansible/inventory.ini ../ansible/main.yaml
-# 또는 ecr playbook만 단독:
-ansible-playbook -i ../ansible/inventory.ini ../ansible/ecr-credential-provider-setup.yaml
+# WSL/Linux/Mac
+sudo apt install -y golang-go    # 또는 brew install go
+mkdir -p /tmp/build && cd /tmp/build
+git clone --depth 1 --branch v1.30.10 https://github.com/kubernetes/cloud-provider-aws.git
+cd cloud-provider-aws
+CGO_ENABLED=0 go build -o /tmp/ecr-credential-provider ./cmd/ecr-credential-provider
+
+# 검증
+ls -la /tmp/ecr-credential-provider
+# -rwxr-xr-x ... 30033150 ... /tmp/ecr-credential-provider (~30MB)
 ```
 
-**주의**: kubelet 재시작은 노드 단위로 일시적 영향. 운영 클러스터라면 `serial: 1`로 rolling 적용 권장.
-- Ansible의Playbook을 기동하기위한 리모트 호스트의 Fingerprint를 로컬 머신에 등록할 필요가 있다. 양쪽의 bastion에 ssh접속해서「yes」를 입력하자
-```terraform
-output "ap-northeast-2a-bastion-node-connect-command" {
-  value = "ssh ec2-user@${aws_instance.ap-northeast-2a-bastion-node.public_ip} -i ~/.ssh/ktcloud-bastion-node-key"
-}
+ansible의 `ecr-credential-provider-setup.yaml`이 위 binary를 모든 노드에 copy.
 
-output "ap-northeast-2b-bastion-node-connect-command" {
-  value = "ssh ec2-user@${aws_instance.ap-northeast-2b-bastion-node.public_ip} -i ~/.ssh/ktcloud-bastion-node-key"
-}
-```
+---
 
-### Ansible
-- inventory.ini가terraform의.tftpl에서 작성되어
-- ping이 도달하는지 확인하다.
-```terminal
-➜  ansible git:(master) ansible all -m ping -i inventory.ini
-```
-- K8S의 클러스터 셋업하는 Playbook을 기동한다.
-```terminal
-➜  ansible git:(master) ansible-playbook -i inventory.ini main.yaml
+## STEP 4 — Ansible 실행 (k8s + ArgoCD + ECR credential provider)
+
+### 사전 — Bastion fingerprint 등록 (PowerShell 또는 bash, 1회)
+
+```bash
+# terraform output ap-northeast-2a-bastion-node-connect-command 참조
+ssh ec2-user@<2a-bastion-ip> -i ~/.ssh/ktcloud-bastion-node-key
+# "yes" 입력 후 exit
+
+ssh ec2-user@<2b-bastion-ip> -i ~/.ssh/ktcloud-bastion-node-key
+# "yes" 입력 후 exit
 ```
 
-### K8S Cluster
-- 키페어는 같기 때문에 ssh에이전트를 등록한다
-```terminal
-➜  ktcloud-sptingboot-msa-market-service git:(master) ✗ ssh-add ~/.ssh/ktcloud-bastion-node-key
-Identity added: /Users/kanei/.ssh/ktcloud-bastion-node-key (kanei@gim-yeonghoui-MacBookPro.local)
-```
-- 이하의output의 결과를 한번에 확인가능하다
-```terraform
-output "main-master-node-connect-command" {
-  value = "ssh -A -J ec2-user@${aws_instance.ap-northeast-2b-bastion-node.public_ip} ec2-user@${aws_instance.ap-northeast-2b-master-node-01.private_ip}"
-}
-```
-- 실제로 접속해서 확인하면
-```terminal
-[ec2-user@ip-10-0-4-212 ~]$ kubectl get nodes
-NAME                                            STATUS   ROLES           AGE   VERSION
-ip-10-0-2-149.ap-northeast-2.compute.internal   Ready    <none>          39m   v1.30.14
-ip-10-0-2-63.ap-northeast-2.compute.internal    Ready    control-plane   40m   v1.30.14
-ip-10-0-2-81.ap-northeast-2.compute.internal    Ready    control-plane   40m   v1.30.14
-ip-10-0-4-196.ap-northeast-2.compute.internal   Ready    <none>          39m   v1.30.14
-ip-10-0-4-212.ap-northeast-2.compute.internal   Ready    control-plane   40m   v1.30.14
-ip-10-0-4-6.ap-northeast-2.compute.internal     Ready    <none>          39m   v1.30.14
-```
-- alb을 사용하기위한 로드밸런서도 기동중인 것을 확인할 수 있다.
-```terminal
-[ec2-user@ip-10-0-4-126 ~]$ kubectl get pods -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller
-NAME                                            READY   STATUS    RESTARTS   AGE
-aws-load-balancer-controller-5cdc56445f-9xn6t   1/1     Running   0          2m15s
-aws-load-balancer-controller-5cdc56445f-gmrcr   1/1     Running   0          2m15s
-```
-- argocd cli를 설치
-```terminal
-sudo curl -sSL -o /usr/local/bin/argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+### Ansible ping
 
-sudo chmod +x /usr/local/bin/argocd
-
-argocd version --client
+WSL/Linux/Mac에서:
+```bash
+cd ansible
+ansible all -m ping -i inventory.ini -o
 ```
-- argocd login
-```terminal
+
+기대: 6개 노드 모두 `pong`. 실패 시 ssh key 권한 (`chmod 600 ~/.ssh/ktcloud-bastion-node-key`) 또는 bastion fingerprint 미등록 확인.
+
+### 전체 playbook 실행
+
+```bash
+ansible-playbook -i inventory.ini main.yaml
+```
+
+소요: ~10-15분. 단계:
+1. k8s-pre-setup, k8s-pkg-install, containerd-setup (모든 노드)
+2. master-init (첫 master), master-cni-setup (Calico), master-python-setup
+3. join-master (HA), join-worker (worker)
+4. helm-setup → nlb-setup (AWS LB Controller) → argocd-setup
+5. **ecr-credential-provider-setup** — `/tmp/ecr-credential-provider` binary가 있어야 작동
+
+마지막 단계가 kubelet에 ECR 인증 설정 + 재시작. 검증: 어느 워커 노드에서:
+```bash
+ps aux | grep '[k]ubelet' | grep image-credential-provider-config
+```
+→ `--image-credential-provider-config=/etc/kubernetes/credential-provider-config.yaml` 보여야 정상.
+
+---
+
+## STEP 5 — 클러스터 검증
+
+```bash
+# bastion 경유 master 접속
+ssh-add ~/.ssh/ktcloud-bastion-node-key
+ssh -A -J ec2-user@<2b-bastion-ip> ec2-user@<b-master-01-private-ip>
+
+# 클러스터 상태
+kubectl get nodes        # 6개 노드 Ready (master 3 + worker 3)
+kubectl get pods -A      # argocd, kube-system, aws-load-balancer-system 모두 Running
+
+# ArgoCD root-app 자동 생성됨 (argocd-setup playbook이 fetch + apply)
+kubectl -n argocd get application
+
+# admin 비밀번호
 kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d; echo
-
-argocd login <b-master-01-ip>:30080 --username admin --insecure
 ```
-- argocd command, Traefik은 Degraded에서 Healthy 까지 5분 이상 걸린다
-```terminal
-argocd app list
 
-argocd app get argocd/root-app
+ArgoCD UI / CLI 접근은 [msa-argocd-manifest README](https://github.com/KTCloud-CloudNative-Troica-Team/msa-argocd-manifest) 참조.
 
-argocd app sync root-app --prune
+---
+
+## 비용 사이클 — apply / destroy 반복 (예산 제약 대응)
+
+영구 자원 (~$1/월)은 유지하고 임시 자원만 destroy → 다음 작업 시 다시 apply.
+
+### 임시 자원 destroy (검증 종료 시)
+
+#### Linux/Mac (bash)
+```bash
+bash scripts/destroy-temp.sh
+# 또는 무인:
+bash scripts/destroy-temp.sh --auto-approve
 ```
+
+#### Windows PowerShell
+```powershell
+.\scripts\destroy-temp.ps1
+# 또는 무인:
+.\scripts\destroy-temp.ps1 -AutoApprove
+```
+
+소요: ~5-10분. 결과: ~33개 자원 destroyed, 영구 자원 (OIDC/IAM/ECR/KMS/VPC/Subnet/SG)은 유지.
+
+### 다음 사이클 재개
+
+```bash
+terraform apply         # 임시 자원만 재생성 (영구는 unchanged)
+# 그 후 STEP 4의 ansible main.yaml 다시 실행
+```
+
+ECR 이미지는 그대로 보존 → 서비스 재빌드 불필요.
+
+### prevent_destroy 일시 해제 (정말 필요한 경우만)
+
+프로젝트 종료 등 영구 자원도 destroy해야 하면:
+1. `oidc.tf`, `ecr.tf`의 모든 `prevent_destroy = true` → `false` (commit 권장)
+2. `terraform destroy` 전체
+3. S3 backend bucket 수동 삭제: `aws s3 rb s3://$BUCKET --force`
+
+ECR 레포는 `force_delete = true`로 이미지 들어있어도 destroy 가능.
+
+---
+
+## IAM 정책 (AWS CLI 사용자에 부착)
+
+terraform apply 실행자가 가져야 할 최소 권한:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "EC2AndVPCManagement",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:*Vpc*", "ec2:*Subnet*", "ec2:*Gateway*", "ec2:*Route*",
+        "ec2:*Address*", "ec2:*Instance*", "ec2:*SecurityGroup*",
+        "ec2:*NetworkInterface*", "ec2:*KeyPair*", "ec2:*Image*",
+        "ec2:*Volume*", "ec2:*Tag*"
+      ],
+      "Resource": "*"
+    },
+    {"Sid": "ELBManagement", "Effect": "Allow", "Action": ["elasticloadbalancing:*"], "Resource": "*"},
+    {
+      "Sid": "EFSManagement", "Effect": "Allow",
+      "Action": [
+        "elasticfilesystem:CreateFileSystem", "elasticfilesystem:CreateMountTarget",
+        "elasticfilesystem:DeleteFileSystem", "elasticfilesystem:DeleteMountTarget",
+        "elasticfilesystem:DescribeFileSystems", "elasticfilesystem:DescribeMountTargets",
+        "elasticfilesystem:ModifyFileSystem", "elasticfilesystem:DescribeMountTargetSecurityGroups"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+IAM Role 관련 (별도 attach):
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {"Sid": "AllowReadSpecificRole", "Effect": "Allow",
+     "Action": ["iam:GetRole", "iam:ListRoles", "iam:PassRole"], "Resource": "*"},
+    {"Sid": "AllowInstanceProfileManagement", "Effect": "Allow",
+     "Action": [
+       "iam:GetInstanceProfile", "iam:CreateInstanceProfile",
+       "iam:AddRoleToInstanceProfile", "iam:RemoveRoleFromInstanceProfile",
+       "iam:DeleteInstanceProfile"
+     ], "Resource": "*"}
+  ]
+}
+```
+
+NLB를 클러스터에 등록하기 위한 IAM Role: [kubernetes-sigs/aws-load-balancer-controller iam_policy.json](https://github.com/kubernetes-sigs/aws-load-balancer-controller/blob/main/docs/install/iam_policy.json)을 `ktcloud-cluster-node-role`에 부착.
+
+---
+
+## 키페어 (1인이 1회 생성)
+
+```bash
+bash ssh-key-gen.bash
+```
+
+`~/.ssh/ktcloud-bastion-node-key{,.pub}` 생성. 협업자는 동일 private key 안전 채널로 공유.
+
+---
+
+## 트러블슈팅
+
+- **`.sh` 스크립트가 PowerShell에서 안 돌아감** → CRLF 변환. `.gitattributes`로 LF 강제됨 (재clone 권장). 또는 PowerShell native `destroy-temp.ps1` 사용. [TROUBLESHOOTING §6.3](https://github.com/KTCloud-CloudNative-Troica-Team/msa-argocd-manifest/blob/main/docs/TROUBLESHOOTING.md#63-sh-파일이-git에서-crlf로-저장--bash-실패)
+- **AWS s3api JSON 따옴표 깨짐 (PowerShell)** → shorthand 사용 (위 STEP 1의 PowerShell 예제). [TROUBLESHOOTING §6.2](https://github.com/KTCloud-CloudNative-Troica-Team/msa-argocd-manifest/blob/main/docs/TROUBLESHOOTING.md#62-powershell-json-quoting-aws-s3api)
+- **terraform `-flag=value` 파싱 깨짐 (PowerShell)** → 공백 분리 또는 array splatting. [TROUBLESHOOTING §6.1](https://github.com/KTCloud-CloudNative-Troica-Team/msa-argocd-manifest/blob/main/docs/TROUBLESHOOTING.md#61-powershell--flagvalue-인수-파싱-깨짐)
+- **cloud-provider-aws release에 binary 없음 (404)** → Go 빌드로 우회 (STEP 3). [TROUBLESHOOTING §5.1](https://github.com/KTCloud-CloudNative-Troica-Team/msa-argocd-manifest/blob/main/docs/TROUBLESHOOTING.md#51-cloud-provider-aws-release에-binary-asset-없음)
+- **kubelet ECR pull 실패 (`no basic auth credentials`)** → drop-in이 systemd에 평가 안 됨. ansible playbook이 `kubeadm-flags.env` 직접 수정 fallback 포함 (R-30). [TROUBLESHOOTING §8.1](https://github.com/KTCloud-CloudNative-Troica-Team/msa-argocd-manifest/blob/main/docs/TROUBLESHOOTING.md#81-kubelet-kubelet_extra_args-drop-in-미평가)
+- **K8S_VARS_HOLDER unreachable** → `join-master.yaml`의 vars 저장용 가상 호스트. 다른 노드 task 정상이면 무시 가능. [TROUBLESHOOTING §7.5](https://github.com/KTCloud-CloudNative-Troica-Team/msa-argocd-manifest/blob/main/docs/TROUBLESHOOTING.md#75-k8s_vars_holder-unreachable)
+
+---
+
+## 관련 문서
+
+- [msa-argocd-manifest](https://github.com/KTCloud-CloudNative-Troica-Team/msa-argocd-manifest) — GitOps 매니페스트 + SPEC + ADR
+- [TROUBLESHOOTING.md](https://github.com/KTCloud-CloudNative-Troica-Team/msa-argocd-manifest/blob/main/docs/TROUBLESHOOTING.md) — 디버깅 자료
+- [BACKLOG.md](https://github.com/KTCloud-CloudNative-Troica-Team/msa-argocd-manifest/blob/main/docs/BACKLOG.md) — 작업 진행 상태 (Phase 0 완료)
