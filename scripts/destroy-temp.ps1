@@ -13,6 +13,14 @@ param(
     [switch]$AutoApprove
 )
 
+# PowerShell 5.1 default output encoding 은 시스템 코드페이지 (한국 환경 CP949) →
+# 스크립트 안의 UTF-8 한글이 콘솔에 깨져 표시됨 ("?꾩떆 ?먯썝留?" 등).
+# Console + 파이프 양쪽 모두 UTF-8 강제.
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+# native exe (terraform 등) 의 stdout 도 UTF-8 로 받기 위해 코드페이지도 변경.
+$null = chcp 65001
+
 $ErrorActionPreference = "Stop"
 
 # 본 스크립트 위치 기준으로 terraform 디렉토리 진입
