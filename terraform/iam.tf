@@ -51,3 +51,21 @@ resource "aws_iam_role_policy_attachment" "node_secretsmanager_troica" {
   role       = data.aws_iam_role.ktcloud-cluster-node-role.name
   policy_arn = aws_iam_policy.node_secretsmanager_troica.arn
 }
+
+# Phase 5 — AWS EBS CSI driver 가 PVC 요청 시 EBS volume create / attach / detach /
+# delete / snapshot 호출 시 사용. self-managed kubeadm cluster 라 EKS 처럼 자동
+# 설치되지 않으므로 platform/05-ebs-csi/ (msa-argocd-manifest) 가 helm chart 로
+# 설치. EBS CSI controller pod 는 default credential provider chain 으로 IMDS →
+# EC2 node IAM role 자동 사용 (ESO 와 동일 패턴, R-25).
+#
+# AWS managed AmazonEBSCSIDriverPolicy 가 CSI driver 가 필요한 최소 권한 정의:
+#   ec2:CreateVolume, DeleteVolume, AttachVolume, DetachVolume,
+#   DescribeVolumes, DescribeInstances, CreateTags, CreateSnapshot,
+#   DeleteSnapshot, DescribeSnapshots 등.
+#
+# 매니페스트 측 짝: msa-argocd-manifest PR-B — platform/05-ebs-csi/ +
+# gp3 StorageClass (default).
+resource "aws_iam_role_policy_attachment" "node_ebs_csi" {
+  role       = data.aws_iam_role.ktcloud-cluster-node-role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
+}
