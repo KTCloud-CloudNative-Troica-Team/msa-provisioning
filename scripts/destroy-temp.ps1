@@ -1,34 +1,31 @@
-# destroy-temp.ps1 — PowerShell 버전.
-# Windows에서 destroy-temp.sh를 직접 못 돌리는 두 가지 이유 회피:
-#   1) git autocrlf로 .sh가 CRLF 저장 → bash가 못 읽음 ($'\r' 에러)
-#   2) PowerShell이 `-flag=value` 형태 인수를 깨뜨림 → array splatting으로 우회
+# destroy-temp.ps1 — PowerShell version.
+# Reason for two workarounds when running destroy on Windows:
+#   1) git autocrlf saves .sh with CRLF -> bash can't read ($'\r' error)
+#   2) PowerShell breaks `-flag=value` style args -> use array splatting
 #
-# 사용:
+# Note: Korean characters in Write-Host previously got mangled on PowerShell 5.1
+# under CP949 locale because the parser decodes the script file as ANSI before
+# applying any chcp / OutputEncoding setting. Switched all user-facing strings
+# to English to avoid the issue entirely.
+#
+# Usage:
 #   cd msa-provisioning
 #   .\scripts\destroy-temp.ps1
-#   또는:
-#   .\scripts\destroy-temp.ps1 -AutoApprove   # 무인 (확인 없이 destroy)
+#   or:
+#   .\scripts\destroy-temp.ps1 -AutoApprove   # unattended (no prompt)
 
 param(
     [switch]$AutoApprove
 )
 
-# PowerShell 5.1 default output encoding 은 시스템 코드페이지 (한국 환경 CP949) →
-# 스크립트 안의 UTF-8 한글이 콘솔에 깨져 표시됨 ("?꾩떆 ?먯썝留?" 등).
-# Console + 파이프 양쪽 모두 UTF-8 강제.
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-$OutputEncoding = [System.Text.Encoding]::UTF8
-# native exe (terraform 등) 의 stdout 도 UTF-8 로 받기 위해 코드페이지도 변경.
-$null = chcp 65001
-
 $ErrorActionPreference = "Stop"
 
-# 본 스크립트 위치 기준으로 terraform 디렉토리 진입
+# Enter the terraform directory relative to this script's location
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Push-Location (Join-Path $scriptDir "..\terraform")
 
 $targets = @(
-    # EC2 인스턴스
+    # EC2 instances
     "-target=aws_instance.ap-northeast-2a-master-node-01",
     "-target=aws_instance.ap-northeast-2a-master-node-02",
     "-target=aws_instance.ap-northeast-2a-worker-node-01",
@@ -37,7 +34,7 @@ $targets = @(
     "-target=aws_instance.ap-northeast-2b-worker-node-01",
     "-target=aws_instance.ap-northeast-2b-worker-node-02",
     "-target=aws_instance.ap-northeast-2b-bastion-node",
-    # EBS 볼륨 + 부착
+    # EBS volumes + attachments
     "-target=aws_ebs_volume.ap-northeast-2a-worker-01-ebs",
     "-target=aws_ebs_volume.ap-northeast-2b-worker-01-ebs",
     "-target=aws_ebs_volume.ap-northeast-2b-worker-02-ebs",
@@ -66,11 +63,11 @@ $targets = @(
     "-target=aws_efs_mount_target.private-ap-northeast-2a-mt",
     "-target=aws_efs_mount_target.private-ap-northeast-2b-mt",
     "-target=aws_efs_file_system.kt-cloud-cluster-efs",
-    # ansible inventory 로컬 파일 (EC2 destroy 시 의존성)
+    # ansible inventory local file (EC2 destroy dependency)
     "-target=local_file.ansible_inventory"
 )
 
-Write-Host "==> Plan (임시 자원만 destroy)" -ForegroundColor Cyan
+Write-Host "==> Plan (destroy temporary resources only)" -ForegroundColor Cyan
 terraform plan -destroy @targets
 
 Write-Host ""
@@ -82,7 +79,7 @@ if ($AutoApprove) {
 }
 
 Write-Host ""
-Write-Host "==> 완료. 영구 자원(OIDC/IAM/ECR/KMS)은 유지됨." -ForegroundColor Green
-Write-Host "    다음 사이클 재개:  terraform apply"
+Write-Host "==> Done. Permanent resources (OIDC/IAM/ECR/KMS) preserved." -ForegroundColor Green
+Write-Host "    Resume next cycle:  terraform apply"
 
 Pop-Location
