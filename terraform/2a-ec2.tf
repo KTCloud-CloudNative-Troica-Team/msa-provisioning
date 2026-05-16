@@ -40,17 +40,16 @@ resource "aws_instance" "ap-northeast-2a-worker-node-01" {
   key_name             = aws_key_pair.bastion-node-key.key_name
   iam_instance_profile = aws_iam_instance_profile.ktcloud-cluster-node-profile.name
   source_dest_check    = false
-}
 
-resource "aws_ebs_volume" "ap-northeast-2a-worker-01-ebs" {
-  availability_zone = "ap-northeast-2a"
-  size              = 20
-}
-
-resource "aws_volume_attachment" "ap-northeast-2a-worker-01-ebs-att" {
-  device_name = "/dev/sdh"
-  volume_id   = aws_ebs_volume.ap-northeast-2a-worker-01-ebs.id
-  instance_id = aws_instance.ap-northeast-2a-worker-node-01.id
+  # root volume size 명시. AMI default = 8GB → containerd 의 image 저장소
+  # (/var/lib/containerd) 가 platform 30+ application image (kube-prometheus-stack,
+  # strimzi, cnpg, istio, redis-operator, external-secrets, loki, tempo, ...)
+  # pull 시 즉시 꽉 참 → kubelet 의 ephemeral-storage eviction threshold 발동 →
+  # DiskPressure taint → ArgoCD pod 스케줄 실패. 50GB 로 상향.
+  root_block_device {
+    volume_size = 50
+    volume_type = "gp3"
+  }
 }
 
 resource "aws_instance" "ap-northeast-2a-bastion-node" {

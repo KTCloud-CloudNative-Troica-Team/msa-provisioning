@@ -22,17 +22,12 @@ resource "aws_instance" "ap-northeast-2b-worker-node-01" {
   key_name             = aws_key_pair.bastion-node-key.key_name
   iam_instance_profile = aws_iam_instance_profile.ktcloud-cluster-node-profile.name
   source_dest_check    = false
-}
 
-resource "aws_ebs_volume" "ap-northeast-2b-worker-01-ebs" {
-  availability_zone = "ap-northeast-2b"
-  size              = 20
-}
-
-resource "aws_volume_attachment" "ap-northeast-2b-worker-01-ebs-att" {
-  device_name = "/dev/sdh"
-  volume_id   = aws_ebs_volume.ap-northeast-2b-worker-01-ebs.id
-  instance_id = aws_instance.ap-northeast-2b-worker-node-01.id
+  # root volume size — 2a-ec2.tf 참조. ephemeral-storage 부족 해소 위해 50GB.
+  root_block_device {
+    volume_size = 50
+    volume_type = "gp3"
+  }
 }
 
 resource "aws_instance" "ap-northeast-2b-worker-node-02" {
@@ -44,17 +39,12 @@ resource "aws_instance" "ap-northeast-2b-worker-node-02" {
   key_name             = aws_key_pair.bastion-node-key.key_name
   iam_instance_profile = aws_iam_instance_profile.ktcloud-cluster-node-profile.name
   source_dest_check    = false
-}
 
-resource "aws_ebs_volume" "ap-northeast-2b-worker-02-ebs" {
-  availability_zone = "ap-northeast-2b"
-  size              = 20
-}
-
-resource "aws_volume_attachment" "ap-northeast-2b-worker-02-ebs-att" {
-  device_name = "/dev/sdh"
-  volume_id   = aws_ebs_volume.ap-northeast-2b-worker-02-ebs.id
-  instance_id = aws_instance.ap-northeast-2b-worker-node-02.id
+  # root volume size — 2a-ec2.tf 참조. ephemeral-storage 부족 해소 위해 50GB.
+  root_block_device {
+    volume_size = 50
+    volume_type = "gp3"
+  }
 }
 
 resource "aws_instance" "ap-northeast-2b-bastion-node" {
