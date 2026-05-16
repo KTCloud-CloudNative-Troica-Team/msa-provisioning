@@ -17,13 +17,8 @@
     - name: Helm 리포지토리 업데이트
       command: helm repo update
 
-    - name: LBC Webhook 설정 삭제
-      shell: |
-        kubectl delete mutatingwebhookconfigurations mservice.elbv2.k8s.aws --ignore-not-found
-        kubectl delete validatingwebhookconfigurations vservice.elbv2.k8s.aws --ignore-not-found
-      environment:
-        KUBECONFIG: /home/ec2-user/.kube/config
-      ignore_errors: yes
+    # LBC webhook delete workaround 제거: main.yaml 에서 nlb-setup.yaml 자체를 제거했으므로
+    # mservice.elbv2.k8s.aws / vservice.elbv2.k8s.aws webhook 가 처음부터 등록 안 됨.
 
     - name: ArgoCD 설치
       kubernetes.core.helm:
