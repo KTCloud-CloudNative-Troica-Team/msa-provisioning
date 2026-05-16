@@ -31,11 +31,15 @@
           server:
             service:
               type: NodePort
-              # 30080 = Istio Gateway 가 사용 (platform/11-istio-cp/application.yaml 의
-              # http2 ports[1].nodePort). 외부 NLB 표준 진입점이라 양보 X.
-              # ArgoCD UI 는 운영 진입이라 별 port (30090).
+              # 외부 NLB 표준 진입점 = Istio Gateway (30080 http + 30443 https).
+              # ArgoCD chart 의 nodePort 가 명시 안 되면 chart default 가 그 표준 port
+              # 와 우연히 충돌 (http=30080, https=30443) → ArgoCD 가 먼저 sync 되어
+              # port 점유 → Istio Gateway Service Invalid → ingressgateway 안 뜸.
+              # ArgoCD UI 는 운영 진입 (--insecure 모드라 https 사실상 안 씀) → 두 port
+              # 모두 양보. http 30090 / https 30493.
               nodePorts:
                 http: 30090
+                https: 30493
             extraArgs:
               - --insecure
 
