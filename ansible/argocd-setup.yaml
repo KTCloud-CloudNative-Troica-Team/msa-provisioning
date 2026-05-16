@@ -31,8 +31,11 @@
           server:
             service:
               type: NodePort
+              # 30080 = Istio Gateway 가 사용 (platform/11-istio-cp/application.yaml 의
+              # http2 ports[1].nodePort). 외부 NLB 표준 진입점이라 양보 X.
+              # ArgoCD UI 는 운영 진입이라 별 port (30090).
               nodePorts:
-                http: 30080
+                http: 30090
             extraArgs:
               - --insecure
 
