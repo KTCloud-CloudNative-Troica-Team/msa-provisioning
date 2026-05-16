@@ -11,7 +11,13 @@
 
 - import_playbook: helm-setup.yaml
 
-- import_playbook: nlb-setup.yaml
+# AWS Load Balancer Controller (LBC) 제거: Troica 는 외부 NLB 를 terraform 으로 직접
+# 생성하고, cluster 안 ingress 는 Istio Gateway 가 처리. K8s `kind: Ingress` 자원 또는
+# Service `type: LoadBalancer` 자동 변환을 사용 안 함 → LBC 자체가 불필요.
+# 부작용: LBC 의 mutating webhook (mservice.elbv2.k8s.aws) 가 모든 Service 자원 생성을
+# 가로채는데, 그 직후 ArgoCD 의 Service 생성 시 webhook timeout (LBC pod 가 아직 Ready
+# 안 됨) → helm install 실패. 따라서 LBC 자체 제거가 가장 깨끗한 fix.
+# - import_playbook: nlb-setup.yaml
 
 - import_playbook: argocd-setup.yaml
 
