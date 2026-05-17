@@ -32,14 +32,22 @@
             service:
               type: NodePort
               # 외부 NLB 표준 진입점 = Istio Gateway (30080 http + 30443 https).
-              # ArgoCD chart 의 nodePort 가 명시 안 되면 chart default 가 그 표준 port
-              # 와 우연히 충돌 (http=30080, https=30443) → ArgoCD 가 먼저 sync 되어
-              # port 점유 → Istio Gateway Service Invalid → ingressgateway 안 뜸.
-              # ArgoCD UI 는 운영 진입 (--insecure 모드라 https 사실상 안 씀) → 두 port
-              # 모두 양보. http 30090 / https 30493.
-              nodePorts:
-                http: 30090
-                https: 30493
+              # ArgoCD chart 의 default nodePort 가 같은 30080/30443 → 충돌 (ArgoCD 가
+              # 먼저 sync → port 점유 → Istio Gateway Service Invalid → ingressgateway 안 뜸).
+              # ArgoCD UI 는 운영 진입 (--insecure 모드라 https 사실상 안 씀) → 두 port 양보.
+              #
+              # IMPORTANT — chart 의 정확한 path:
+              #   argo-cd chart 9.5.14 의 server.service 의 nodePort key 는 명백히 single
+              #   camelCase: `nodePortHttp` / `nodePortHttps`. 이전 commit (PR #19/#20) 의
+              #   `nodePorts.http / nodePorts.https` (nested) 는 chart template 가 reference
+              #   안 함 → helm 가 받았어도 무시 → chart default (30080/30443) 그대로 적용.
+              #
+              # 검증: helm show values argo/argo-cd | grep -B 1 nodePortHttp
+              #   # -- Server service http port for NodePort service type
+              #   nodePortHttp: 30080
+              #   nodePortHttps: 30443
+              nodePortHttp: 30090
+              nodePortHttps: 30493
             extraArgs:
               - --insecure
 
