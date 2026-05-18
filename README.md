@@ -32,14 +32,14 @@ Troica Market Service MSA의 **AWS 인프라 (Terraform) + Kubernetes 클러스�
 
 ```
 1. (1인, 1회) S3 backend bucket 수동 생성 — terraform 외부
-2. (1인, 1회) terraform apply — 영구 + 임시 자원 일괄
-3. (1인, 1회) GitHub Org Secrets/Variables 등록 — AWS_ACCOUNT_ID / MANIFEST_PAT / AWS_DEPLOYMENTS_ENABLED=true
-4. (1인) Go 빌드 — ecr-credential-provider 바이너리
-5. (1인) Ansible 실행 — k8s + ArgoCD + ECR credential provider 셋업
-6. (검증 후) destroy-temp.sh — 임시 자원만 정리 (영구 자원 유지)
+2. (1인, 매 cycle) terraform plan -out cluster-up.tfplan + apply — 영구 + 임시 자원 일괄
+3. (1인, 1회) GitHub Org Secrets/Variables 등록 — AWS_ACCOUNT_ID / MANIFEST_PAT / AWS_DEPLOYMENTS_ENABLED=true / E2E_ENABLED=true
+4. (1인) Go 빌드 — ecr-credential-provider 바이너리 (Phase 0 첫 회만)
+5. (1인, 매 cycle) Ansible 실행 — k8s + ArgoCD + ECR credential provider 셋업
+6. (검증 후) destroy-temp.{sh,ps1} — 임시 자원만 정리 (영구 자원 유지)
 ```
 
-각 단계 상세는 아래 섹션.
+각 단계 상세는 아래 섹션. 매 cycle 의 cluster up/down 은 2 + 5 + 6 만 반복.
 
 ---
 
@@ -52,10 +52,17 @@ Troica Market Service MSA의 **AWS 인프라 (Terraform) + Kubernetes 클러스�
 | **영구** | OIDC Provider, IAM Role, IAM Role Policy | `lifecycle { prevent_destroy = true }` | ~$0 |
 | **영구** | ECR KMS key + alias | `prevent_destroy = true` | ~$1 |
 | **영구** | ECR 레포 × 6 + lifecycle policy | `prevent_destroy = true` + `force_delete = true` | ~$0 (이미지 적음) |
-| **영구** | VPC, Subnet, RT, IGW, SG, Key Pair | (변경 없음, 비용 0) | $0 |
-| **임시** | EC2 × 8, EBS × 3, EFS, NAT × 2, NLB, EIP × 4 | `scripts/destroy-temp.{sh,ps1} -target` | ~$300 |
-| **임시** | VPC Endpoint Interface × 2 + S3 Gateway | `scripts/destroy-temp.{sh,ps1} -target` | ~$14 |
+| **영구** | VPC, Subnet × 4, RT × 3, IGW, SG × 4, Key Pair | (변경 없음, 비용 0) | $0 |
+| **임시** | EC2 × 8 (master 3 t3.medium + worker 3 t3.large + bastion 2 t3.nano) | `scripts/destroy-temp.{sh,ps1}` | ~$135 |
+| **임시** | NAT Gateway × 2 + NAT EIP × 2 | 동일 | ~$65 |
+| **임시** | NLB + Target Group × 3 (k8s-api + istio-http + istio-https) + Listener × 3 (6443/80/443) + Attachment × 9 + NLB EIP × 2 | 동일 — R-35 (d) / PR #22 Istio Gateway path 포함 | ~$25 |
+| **임시** | EFS File System + Mount Target × 2 | 동일 | ~$5 |
+| **임시** | EBS — PVC dynamic provisioning (EBS CSI) | 동일 + destroy-temp 측 orphan EBS 자동 cleanup (R-60) | ~$30 |
+| **임시** | VPC Endpoint Interface × 2 (ecr.api/ecr.dkr) + S3 Gateway endpoint | 동일 | ~$14 |
+| **임시** | SG rules × 3 separate (`cluster_node_self_ingress` + `cluster_node_istio_http_ingress` + `cluster_node_istio_https_ingress`, PR #22) | 동일 | $0 |
 | **수동** | S3 backend bucket | Terraform 외부 1회 생성 (닭과 달걀 회피) | <$0.5 |
+
+**총 월 비용**: cluster up 시 ~$300 + 영구 ~$1 + 수동 ~$0.5 = **~$301/월**
 
 **ARN/URL 안정성**: 영구 자원은 모두 **name-based**. destroy → apply 후에도 ARN/URL 동일 → GitHub Secrets 영구 유효.
 
@@ -152,11 +159,16 @@ S3 lockfile (`use_lockfile = true`)로 동시 apply 방지. DynamoDB 불필요.
 ### apply
 
 ```bash
-terraform plan -out phase-0.tfplan
-terraform apply phase-0.tfplan
+# plan 결과 파일 저장 (변경 사전 review 가능)
+terraform plan -out cluster-up.tfplan
+
+# apply 실행 (saved plan 사용 — 다른 변경 측 추가 안 됨 보장)
+terraform apply cluster-up.tfplan
 ```
 
-기대: ~71개 자원 생성 (영구 17 + 임시 ~45 + 부수). 약 5-15분.
+기대: **~83개 자원 생성** (영구 17 + 임시 ~63 + 부수, PR #22 Istio NLB path 포함). 약 5-15분.
+
+**주의**: 매 cycle (cluster destroy + apply) 마다 `cluster-up.tfplan` 같은 이름 재사용. plan 파일은 git ignore (`.tfplan` pattern 측 `.gitignore` 추가됨).
 
 ### output 확인 + Org Secrets 등록
 
@@ -174,7 +186,8 @@ terraform output ecr_registry_url
 |------|------|----|
 | Secret | `AWS_ACCOUNT_ID` | 위 ARN의 12자리 account_id |
 | Secret | `MANIFEST_PAT` | fine-grained PAT (`msa-argocd-manifest` contents:write + pull-requests:write) |
-| **Variable** | `AWS_DEPLOYMENTS_ENABLED` | `true` (BACKLOG R-19 활성화 — 6개 서비스 CI 일괄 활성) |
+| **Variable** | `AWS_DEPLOYMENTS_ENABLED` | `true` (R-19 활성화 — 6 polyrepo CI 의 ECR push step 활성) |
+| **Variable** | `E2E_ENABLED` | `true` (R-42 활성화 — `msa-argocd-manifest` 의 e2e-newman workflow 의 cluster 실 호출 활성. 비활성 시 PR build 측 collection JSON syntax 만 검증) |
 
 ---
 
@@ -243,16 +256,19 @@ ps aux | grep '[k]ubelet' | grep image-credential-provider-config
 
 ---
 
-## STEP 5 — 클러스터 검증
+## STEP 5 — 클러스터 검증 + 평가 시연 path
+
+### 5.1 cluster 기본 상태
 
 ```bash
-# bastion 경유 master 접속
-ssh-add ~/.ssh/ktcloud-bastion-node-key
-ssh -A -J ec2-user@<2b-bastion-ip> ec2-user@<b-master-01-private-ip>
+# bastion 경유 master 접속 — terraform output 으로 IP 확인
+terraform output main-master-node-connect-command
+# 출력 예: "ssh -A -J ec2-user@<2b-bastion-public-ip> ec2-user@<b-master-01-private-ip>"
+# 그 명령 그대로 실행
 
-# 클러스터 상태
+# 클러스터 상태 (master 측)
 kubectl get nodes        # 6개 노드 Ready (master 3 + worker 3)
-kubectl get pods -A      # argocd, kube-system, aws-load-balancer-system 모두 Running
+kubectl get pods -A      # argocd, kube-system 모두 Running
 
 # ArgoCD root-app 자동 생성됨 (argocd-setup playbook이 fetch + apply)
 kubectl -n argocd get application
@@ -261,7 +277,45 @@ kubectl -n argocd get application
 kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d; echo
 ```
 
-ArgoCD UI / CLI 접근은 [msa-argocd-manifest README](https://github.com/KTCloud-CloudNative-Troica-Team/msa-argocd-manifest) 참조.
+### 5.2 Phase 5 platform 배포 대기 (약 5-10 분)
+
+ArgoCD 가 자동 sync — 19 platform Application (Wave -8 ~ 5) + 6 service Application (Wave 10) 차례로 reconcile:
+
+```bash
+# 모든 Application 상태 (Synced + Healthy 목표)
+kubectl get applications -n argocd
+
+# 6 service pod 측 2/2 Running 대기
+kubectl get pods -n market-dev -w
+# Ctrl-C 로 빠져나오기 — 8 pod (api-gateway + 5 service + 2 worker) 모두 2/2 Running
+```
+
+### 5.3 외부 진입 path 검증 (NLB → Istio → api-gateway)
+
+```bash
+# terraform output 으로 NLB DNS 확인
+terraform output -raw nlb_dns_name
+# 출력 예: kt-cloud-nlb-XXXXXX.elb.ap-northeast-2.amazonaws.com
+
+NLB="http://$(terraform output -raw nlb_dns_name)"
+curl -i --max-time 10 "$NLB/healthz"
+# 기대: HTTP/1.1 200 OK + actuator JSON ({"status":"UP"...})
+
+curl -i --max-time 10 "$NLB/api/v1/products"
+# 기대: HTTP/1.1 200 OK + {"products":[]}
+```
+
+### 5.4 평가 시연 (R-41 / R-42 / R-49 등)
+
+자세한 절차는 `msa-argocd-manifest` 의 [SHOWCASE.md](https://github.com/KTCloud-CloudNative-Troica-Team/msa-argocd-manifest/blob/main/docs/SHOWCASE.md) 참조 (평가 발표 시연 path 자동화).
+
+핵심 시연:
+- **R-41 Circuit Breaker** (장애 격리): `kubectl scale deployment product-service --replicas=0` → `/api/v1/products` 즉시 fail-fast (110-280ms) + 다른 service 100% 정상
+- **R-42 Newman E2E**: GitHub UI 에서 `e2e-newman.yml` workflow_dispatch trigger (baseUrl input = NLB DNS) → 5/5 시나리오 PASS
+- **R-49 NetworkPolicy**: `platform/60-network-policies/manifests/` 의 cilium/Calico NetworkPolicy 가 default-deny + 의도 통신만 allow
+- **R-47 Slack**: AlertManager severity=security manual fire → `#security-report` 채널 도착
+
+ArgoCD UI / Grafana 접근 (port-forward + ssh tunnel) 은 [msa-argocd-manifest README](https://github.com/KTCloud-CloudNative-Troica-Team/msa-argocd-manifest) 참조.
 
 ---
 
@@ -285,16 +339,23 @@ bash scripts/destroy-temp.sh --auto-approve
 .\scripts\destroy-temp.ps1 -AutoApprove
 ```
 
-소요: ~5-10분. 결과: ~33개 자원 destroyed, 영구 자원 (OIDC/IAM/ECR/KMS/VPC/Subnet/SG)은 유지.
+소요: ~5-10분. 결과: ~63개 임시 자원 destroyed + orphan EBS PVC 자동 cleanup (R-60). 영구 자원 (OIDC/IAM/ECR/KMS/VPC/Subnet/SG)은 유지.
 
 ### 다음 사이클 재개
 
 ```bash
-terraform apply         # 임시 자원만 재생성 (영구는 unchanged)
-# 그 후 STEP 4의 ansible main.yaml 다시 실행
+# 1. terraform apply 측 cluster up
+terraform plan -out cluster-up.tfplan
+terraform apply cluster-up.tfplan
+
+# 2. STEP 4 의 ansible main.yaml 측 cluster 재구축
+cd ../ansible
+ansible-playbook -i inventory.ini main.yaml
+
+# 3. STEP 5 측 검증
 ```
 
-ECR 이미지는 그대로 보존 → 서비스 재빌드 불필요.
+ECR 이미지는 그대로 보존 → 서비스 재빌드 불필요. msa-argocd-manifest 의 매니페스트도 그대로 → ArgoCD 가 자동 sync.
 
 ### prevent_destroy 일시 해제 (정말 필요한 경우만)
 
