@@ -1,26 +1,27 @@
-- name: ArgoCD 셋업
+- name: ArgoCD setup
   hosts: main-master
   become: false
   tasks:
-    - name: ArgoCD용 Namespace 생성
+    - name: Create namespace for ArgoCD
       kubernetes.core.k8s:
         name: "argocd"
         kind: Namespace
         state: present
         kubeconfig: /home/ec2-user/.kube/config
 
-    - name: ArgoCD Helm 리포지토리 추가
+    - name: Add ArgoCD Helm repository
       kubernetes.core.helm_repository:
         name: argo
         repo_url: "https://argoproj.github.io/argo-helm"
 
-    - name: Helm 리포지토리 업데이트
+    - name: Update Helm repositories
       command: helm repo update
 
-    # LBC webhook delete workaround 제거: main.yaml 에서 nlb-setup.yaml 자체를 제거했으므로
-    # mservice.elbv2.k8s.aws / vservice.elbv2.k8s.aws webhook 가 처음부터 등록 안 됨.
+    # LBC webhook delete workaround removed: nlb-setup.yaml has been dropped
+    # from main.yaml entirely, so mservice.elbv2.k8s.aws / vservice.elbv2.k8s.aws
+    # webhooks are never registered.
 
-    - name: ArgoCD 설치
+    - name: Install ArgoCD
       kubernetes.core.helm:
         name: argocd
         chart_ref: argo/argo-cd
@@ -31,18 +32,20 @@
           server:
             service:
               type: NodePort
-              # 외부 NLB 표준 진입점 = Istio Gateway (30080 http + 30443 https).
-              # ArgoCD chart 의 default nodePort 가 같은 30080/30443 → 충돌 (ArgoCD 가
-              # 먼저 sync → port 점유 → Istio Gateway Service Invalid → ingressgateway 안 뜸).
-              # ArgoCD UI 는 운영 진입 (--insecure 모드라 https 사실상 안 씀) → 두 port 양보.
+              # External NLB standard entrypoint = Istio Gateway (30080 http + 30443 https).
+              # ArgoCD chart's default nodePort is the same 30080/30443 -> collision (ArgoCD
+              # syncs first -> port occupied -> Istio Gateway Service Invalid -> ingressgateway
+              # cannot come up). ArgoCD UI is for operator use (--insecure mode so https is
+              # practically unused) -> yield both ports.
               #
-              # IMPORTANT — chart 의 정확한 path:
-              #   argo-cd chart 9.5.14 의 server.service 의 nodePort key 는 명백히 single
-              #   camelCase: `nodePortHttp` / `nodePortHttps`. 이전 commit (PR #19/#20) 의
-              #   `nodePorts.http / nodePorts.https` (nested) 는 chart template 가 reference
-              #   안 함 → helm 가 받았어도 무시 → chart default (30080/30443) 그대로 적용.
+              # IMPORTANT - chart's exact path:
+              #   argo-cd chart 9.5.14's server.service.nodePort key is explicitly single
+              #   camelCase: `nodePortHttp` / `nodePortHttps`. Earlier commits (PR #19/#20)
+              #   `nodePorts.http / nodePorts.https` (nested) was not referenced by the chart
+              #   template -> helm accepted it but ignored it -> chart defaults (30080/30443)
+              #   were applied as-is.
               #
-              # 검증: helm show values argo/argo-cd | grep -B 1 nodePortHttp
+              # Verification: helm show values argo/argo-cd | grep -B 1 nodePortHttp
               #   # -- Server service http port for NodePort service type
               #   nodePortHttp: 30080
               #   nodePortHttps: 30443
@@ -51,7 +54,7 @@
             extraArgs:
               - --insecure
 
-    - name: CRD 존재 확인
+    - name: Verify CRD existence
       kubernetes.core.k8s_info:
         kind: CustomResourceDefinition
         name: applications.argoproj.io
@@ -60,17 +63,18 @@
       retries: 10
       delay: 5
 
-    # R-32: 팀장님 개인 레포(kanei0415/ktcloud-k8s-argocd-manifest)에서
-    # 우리 팀 매니페스트 레포(KTCloud-CloudNative-Troica-Team/msa-argocd-manifest)로 전환.
-    # inline yaml 정의 대신 매니페스트 레포의 bootstrap/root-app.yaml을 fetch + apply →
-    # 단일 진실의 원천 유지 (root-app spec 변경 시 ansible 재실행 불필요, ArgoCD가 자동 sync).
-    - name: 매니페스트 레포의 root-app.yaml 다운로드
+    # R-32: Switched from the team lead's personal repo (kanei0415/ktcloud-k8s-argocd-manifest)
+    # to our team manifest repo (KTCloud-CloudNative-Troica-Team/msa-argocd-manifest).
+    # Instead of inline yaml definition, we fetch + apply the manifest repo's
+    # bootstrap/root-app.yaml -> single source of truth maintained (no ansible
+    # re-run needed on root-app spec changes; ArgoCD auto-syncs).
+    - name: Download root-app.yaml from manifest repo
       ansible.builtin.get_url:
         url: https://raw.githubusercontent.com/KTCloud-CloudNative-Troica-Team/msa-argocd-manifest/main/bootstrap/root-app.yaml
         dest: /tmp/root-app.yaml
         mode: "0644"
 
-    - name: ArgoCD root Application 생성 (app-of-apps 진입점)
+    - name: Create ArgoCD root Application (app-of-apps entrypoint)
       kubernetes.core.k8s:
         state: present
         src: /tmp/root-app.yaml

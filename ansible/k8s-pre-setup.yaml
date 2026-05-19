@@ -1,12 +1,12 @@
-- name: Kubernetes 클러스터 사전 조건 설정
+- name: Kubernetes cluster prerequisites
   hosts: all
   become: true
   tasks:
-    - name: 스왑 비활성화
+    - name: Disable swap
       ansible.builtin.command: swapoff -a
       when: ansible_swaptotal_mb > 0
 
-    - name: 커널 모듈 로드
+    - name: Load kernel modules
       modprobe:
         name: "{{ item }}"
         state: present
@@ -14,13 +14,13 @@
         - overlay
         - br_netfilter
 
-    - name: 브리지 네트워크 설정 적용
+    - name: Apply bridge network sysctl setting
       ansible.builtin.sysctl:
         name: net.bridge.bridge-nf-call-iptables
         value: "1"
         state: present
 
-    - name: /etc/hosts 파일에 마스터 노드 항목 추가
+    - name: Add master node entries to /etc/hosts
       lineinfile:
         path: /etc/hosts
         line: "{{ item.ip }} {{ item.name }}"

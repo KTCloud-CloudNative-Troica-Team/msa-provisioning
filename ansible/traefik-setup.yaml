@@ -1,26 +1,26 @@
-- name: Traefik Ingress Controller 설치
+- name: Install Traefik Ingress Controller
   hosts: main-master
   become: yes
   vars:
     traefik_namespace: "traefik"
 
   tasks:
-    - name: Traefik용 Namespace 생성
+    - name: Create namespace for Traefik
       kubernetes.core.k8s:
         name: "{{ traefik_namespace }}"
         kind: Namespace
         state: present
         kubeconfig: /home/ec2-user/.kube/config
 
-    - name: Traefik Helm 리포지토리 추가
+    - name: Add Traefik Helm repository
       kubernetes.core.helm_repository:
         name: traefik
         repo_url: "https://traefik.github.io/charts"
 
-    - name: Helm 리포지토리 업데이트
+    - name: Update Helm repositories
       command: helm repo update
 
-    - name: LBC Webhook 설정 삭제
+    - name: Remove LBC webhook configurations
       shell: |
         kubectl delete mutatingwebhookconfigurations mservice.elbv2.k8s.aws --ignore-not-found
         kubectl delete validatingwebhookconfigurations vservice.elbv2.k8s.aws --ignore-not-found
@@ -28,7 +28,7 @@
         KUBECONFIG: /home/ec2-user/.kube/config
       ignore_errors: yes
 
-    - name: Traefik Ingress Controller 설치
+    - name: Install Traefik Ingress Controller
       kubernetes.core.helm:
         name: traefik
         chart_ref: traefik/traefik
