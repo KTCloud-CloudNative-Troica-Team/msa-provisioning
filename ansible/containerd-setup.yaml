@@ -1,31 +1,31 @@
-- name: containerd 셋업
+- name: containerd setup
   hosts: all
   become: true
   tasks:
-    - name: containerd 설치
+    - name: Install containerd
       ansible.builtin.dnf:
         name: containerd
         state: present
 
-    - name: containerd 초기 설정 파일 생성
+    - name: Create default containerd config file
       ansible.builtin.shell: |
         mkdir -p /etc/containerd
         containerd config default > /etc/containerd/config.toml
 
-    - name: SystemdCgroup 활성화
+    - name: Enable SystemdCgroup
       ansible.builtin.replace:
         path: /etc/containerd/config.toml
         regexp: "SystemdCgroup = false"
         replace: "SystemdCgroup = true"
 
-    - name: IPv4 포워딩 활성화
+    - name: Enable IPv4 forwarding
       ansible.builtin.sysctl:
         name: net.ipv4.ip_forward
         value: "1"
         state: present
         reload: true
 
-    - name: containerd 서비스 활성화 및 시작
+    - name: Enable and start containerd service
       ansible.builtin.systemd:
         name: containerd
         state: started
