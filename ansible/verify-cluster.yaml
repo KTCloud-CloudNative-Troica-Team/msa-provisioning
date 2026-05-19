@@ -1,0 +1,43 @@
+- name: Verify cluster health after provisioning
+  hosts: main-master
+  become: false
+  gather_facts: false
+  tasks:
+    - name: Get cluster nodes
+      ansible.builtin.command: kubectl get nodes
+      register: r_nodes
+      changed_when: false
+
+    - name: Show cluster nodes
+      ansible.builtin.debug:
+        msg: "{{ r_nodes.stdout_lines }}"
+
+    - name: Get ArgoCD applications
+      ansible.builtin.command: kubectl get applications -A
+      register: r_apps
+      changed_when: false
+      failed_when: false
+
+    - name: Show ArgoCD applications
+      ansible.builtin.debug:
+        msg: "{{ r_apps.stdout_lines if (r_apps.stdout_lines | length > 0) else ['(no applications yet - argocd will sync them shortly)'] }}"
+
+    - name: Get istio-system pods
+      ansible.builtin.command: kubectl get pods -n istio-system
+      register: r_istio
+      changed_when: false
+      failed_when: false
+
+    - name: Show istio-system pods
+      ansible.builtin.debug:
+        msg: "{{ r_istio.stdout_lines if (r_istio.stdout_lines | length > 0) else ['(istio-system pods not deployed yet - waiting for ArgoCD platform sync)'] }}"
+
+    - name: Get market namespace pods
+      ansible.builtin.command: kubectl get pods -n market
+      register: r_market
+      changed_when: false
+      failed_when: false
+
+    - name: Show market namespace pods
+      ansible.builtin.debug:
+        msg: "{{ r_market.stdout_lines if (r_market.stdout_lines | length > 0) else ['(market pods not deployed yet - waiting for microservice sync)'] }}"

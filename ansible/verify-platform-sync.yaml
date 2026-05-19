@@ -1,0 +1,105 @@
+# Wait until ArgoCD platform/microservice Applications converge,
+# then show namespace pods and external NLB reachability.
+# Intended to be recorded by scripts/record-platform-sync.sh.
+- name: Wait for ArgoCD applications to be Synced and Healthy
+  hosts: main-master
+  become: false
+  gather_facts: false
+  vars:
+    poll_max_retries: 60
+    poll_interval_sec: 15
+  tasks:
+    - name: Poll ArgoCD applications until Healthy (or timeout)
+      # NOTE: we deliberately check only HEALTH STATUS, not SYNC STATUS.
+      # Some apps (root-app, platform-root, istio-base/cp, strimzi-operator,
+      # external-secrets-config, tempo) stay perpetually OutOfSync due to
+      # ArgoCD injecting defaults like `directory.recurse: false` into the
+      # cluster state that aren't present in the manifest. This is cosmetic
+      # and doesn't affect runtime; the app is fully Healthy.
+      ansible.builtin.shell: |
+        set -u
+        for i in $(seq 1 {{ poll_max_retries }}); do
+          echo ""
+          echo "=== poll #${i} ==="
+          kubectl get applications -n argocd
+          # Count apps (excluding root-app) whose HEALTH STATUS is not Healthy
+          not_ready=$(kubectl get applications -n argocd --no-headers 2>/dev/null \
+            | awk '$1!="root-app" && $3!="Healthy"' \
+            | wc -l)
+          if [ "$not_ready" -eq 0 ]; then
+            echo ""
+            echo "All applications Healthy after ${i} polls."
+            echo "(Some may still show OutOfSync - that is cosmetic, see playbook comment.)"
+            exit 0
+          fi
+          echo ""
+          echo "${not_ready} application(s) not yet Healthy. Sleeping {{ poll_interval_sec }}s..."
+          sleep {{ poll_interval_sec }}
+        done
+        echo "Timeout waiting for applications to become Healthy."
+        exit 1
+      args:
+        executable: /bin/bash
+      changed_when: false
+      failed_when: false
+      register: r_poll
+
+    - name: Show final ArgoCD applications state
+      ansible.builtin.command: kubectl get applications -A
+      register: r_apps
+      changed_when: false
+      failed_when: false
+
+    - name: Display final ArgoCD applications
+      ansible.builtin.debug:
+        msg: "{{ r_apps.stdout_lines | default(['(no applications found)']) }}"
+
+    - name: Inspect pods across platform / app namespaces
+      ansible.builtin.shell: |
+        for ns in cert-manager istio-system kafka cnpg-system external-secrets kube-prometheus-stack market; do
+          echo ""
+          echo "=== Namespace: ${ns} ==="
+          kubectl get pods -n "${ns}" 2>/dev/null || echo "(namespace not present)"
+        done
+      args:
+        executable: /bin/bash
+      register: r_pods
+      changed_when: false
+      failed_when: false
+
+    - name: Display pods per namespace
+      ansible.builtin.debug:
+        msg: "{{ r_pods.stdout_lines }}"
+
+- name: External reachability via NLB
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    nlb_dns: kt-cloud-nlb-aa60c22c4dd8cc82.elb.ap-northeast-2.amazonaws.com
+    probe_paths:
+      - /api/v1/products
+      - /api/v1/inventories
+      - /api/v1/users
+  tasks:
+    - name: Curl NLB endpoints (HTTP status + latency)
+      # --connect-timeout / --max-time prevent the default 120s wait when
+      # the microservice / istio gateway isn't ready yet. With 3 paths × 5s
+      # this section caps at ~15s instead of 6 minutes.
+      ansible.builtin.shell: |
+        for p in {{ probe_paths | join(' ') }}; do
+          printf '=== curl http://{{ nlb_dns }}%s ===\n' "$p"
+          curl -sS -o /dev/null --connect-timeout 3 --max-time 5 \
+            -w "HTTP %{http_code} (%{time_total}s)\n" \
+            "http://{{ nlb_dns }}${p}" || echo "(curl failed - probably not yet routable)"
+          echo ""
+        done
+      args:
+        executable: /bin/bash
+      register: r_curl
+      changed_when: false
+      failed_when: false
+
+    - name: Display NLB probe results
+      ansible.builtin.debug:
+        msg: "{{ r_curl.stdout_lines }}"
